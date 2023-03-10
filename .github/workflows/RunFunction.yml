@@ -24,7 +24,7 @@ jobs:
       run: pip install -r ./requirements.txt
 
     - name: 修改步数
-      run: python3 main.py
+      run: python3 changebushu_Action.py
       env:
         USER_PHONE: ${{ secrets.USER_PHONE }}
         USER_PWD: ${{ secrets.USER_PWD }}
