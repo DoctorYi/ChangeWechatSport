@@ -1,1 +1,2 @@
-pytz==2022.7.1
+pytz
+requests
