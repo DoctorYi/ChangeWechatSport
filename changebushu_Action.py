@@ -1,18 +1,19 @@
 import requests, time, re, json, os
 from random import randint
- 
+import pytz
+import datetime
+
 headers = {
     'User-Agent': 'Dalvik/2.1.0 (Linux; U; Android 9; MI 6 MIUI/20.6.18)'
 }
 
 def get_code(location):
     code_pattern = re.compile("(?<=access=).*?(?=&)")
-    code = code_pattern.findall(location)[0]
-    return code
+    return code_pattern.findall(location)[0]
 
 
 def login(user, password):
-    url1 = "https://api-user.huami.com/registrations/" + user + "/tokens"
+    url1 = f"https://api-user.huami.com/registrations/{user}/tokens"
     headers = {
         "Content-Type": "application/x-www-form-urlencoded;charset=UTF-8",
         "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_7_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.2"
@@ -28,9 +29,10 @@ def login(user, password):
     try:
         code = get_code(location)
     except:
-        return 0, 0
+        raise ValueError('no access code')
+
     print("access_code获取成功")
- 
+
     url2 = "https://account.huami.com/v2/client/login"
     data2 = {
         "app_name": "com.xiaomi.hm.health",
@@ -48,16 +50,20 @@ def login(user, password):
     userid = r2["token_info"]["user_id"]
     print("userid获取成功")
     return login_token, userid
- 
 
-def main():
+def get_step(step_min, step_max, run_times):
+    # 生成随机步数
+    pace = (step_max - step_min) / run_times
+
+
+
+def main(user, password, step, current_time):
     login_token = 0
     login_token, userid = login(user, password)
     if login_token == 0:
-        print("登陆失败")
-        return "login fail"
+        raise ValueError("login fail")
 
-    t = get_time()
+    t = current_time
 
     app_token = get_app_token(login_token)
 
@@ -67,8 +73,8 @@ def main():
 
     finddate = re.compile(r".*?date%22%3A%22(.*?)%22%2C%22data.*?")
     findstep = re.compile(r".*?ttl%5C%22%3A(.*?)%2C%5C%22dis.*?")
-    data_json = re.sub(finddate.findall(data_json)[0], today, str(data_json))
-    data_json = re.sub(findstep.findall(data_json)[0], step, str(data_json))
+    data_json = re.sub(finddate.findall(data_json)[0], today, data_json)
+    data_json = re.sub(findstep.findall(data_json)[0], str(step), str(data_json))
 
     url = f'https://api-mifit-cn.huami.com/v1/data/band_data.json?&t={t}'
     head = {
@@ -79,17 +85,19 @@ def main():
     data = f'userid={userid}&last_sync_data_time=1597306380&device_type=0&last_deviceid=DA932FFFFE8816E7&data_json={data_json}'
 
     response = requests.post(url, data=data, headers=head).json()
-    result = response['message'] + f"修改步数: {step}  " 
+    if response['message'] != 'success':
+        raise ValueError(response['message'])
+
+    result = response['message'] + f"修改步数: {step}  "
     print(result)
     return result
- 
+
 
 def get_time():
     url = 'http://api.m.taobao.com/rest/api3.do?api=mtop.common.getTimestamp'
     response = requests.get(url, headers=headers).json()
-    t = response['data']['t']
-    return t
- 
+    return response['data']['t']
+
 
 def get_app_token(login_token):
     url = f"https://account-cn.huami.com/v1/client/app_tokens?app_name=com.xiaomi.hm.health&dn=api-user.huami.com%2Capi-mifit.huami.com%2Capp-analytics.huami.com&login_token={login_token}&os_version=4.1.0"
@@ -98,15 +106,41 @@ def get_app_token(login_token):
     print("app_token获取成功")
     return app_token
 
- 
-def main_handler(event, context):
-    return main()
- 
- 
+def get_time_period(start, end, pace):
+    start = datetime.datetime.strptime(f'2023-1-1 {start}', '%Y-%m-%d %H%M')
+    end = datetime.datetime.strptime(f'2023-1-1 {end}', '%Y-%m-%d %H%M')
+
+    while start <= end:
+        yield start.strftime('%H%M')
+        start = start + datetime.timedelta(minutes=pace)
+
+def get_index(time_period, time_str):
+    return next((i-1 for i, v in enumerate(time_period) if time_str < v), 0)
+
+
+def get_step(current_time: str, step_min: int, step_max: int, time_start: str, time_end: str):
+    seconds = int(current_time) / 1000
+    pytz.timezone('Asia/Shanghai')
+    dt = pytz.datetime.datetime.fromtimestamp(seconds)
+    current = dt.strftime('%H%M')
+
+    time_period = list(get_time_period(time_start, time_end, 20))
+    index = get_index(time_period, current)
+
+    min_value = step_min + (step_max - step_min) * index / len(time_period)
+    max_value = step_min + (step_max - step_min) * (index + 1) / len(time_period)
+    return randint(int(min_value), int(max_value))
+
+
 if __name__ == "__main__":
+    current_time = get_time()
+
     user = os.environ['USER_PHONE']
     password = os.environ['USER_PWD']
-    step = str(randint(int(os.environ['STEP_MIN']), int(os.environ['STEP_MAX'])))
-    # step = os.environ['STEP']
-    # step = str(randint(10123, 12302)) 
-    main()
+    step_min, step_max =  int(os.environ.get('STEP_MIN', 20103)), int(os.environ.get('STEP_MAX', 40103))
+    time_start, time_end =  os.environ.get('TIME_START', '0600'), os.environ.get('TIME_END', '1900')
+
+    print(f'参数, step: {step_min}-{step_max}, time: {time_start}-{time_end}')
+
+    step = get_step(current_time, step_min, step_max, time_start, time_end)
+    main(user, password, step, current_time)
